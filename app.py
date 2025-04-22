@@ -4,17 +4,29 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import os
+import uuid
 from dotenv import load_dotenv
 
 # Import custom modules
 from data_fetcher import fetch_stock_data, fetch_forex_data
 from technical_indicators import calculate_indicators
 from model import train_model, make_predictions
-from telegram_alerts import send_telegram_alert
+from telegram_alerts import send_telegram_alert, format_alert_message, send_pending_alerts
 from utils import format_currency, render_indicator_info
+import database as db
+
+# Initialize the database
+db.init_db()
 
 # Load environment variables
 load_dotenv()
+
+# Initialize session state
+if 'session_id' not in st.session_state:
+    st.session_state['session_id'] = str(uuid.uuid4())
+    
+# Get or create user preferences
+user_prefs = db.get_or_create_user_preferences(st.session_state['session_id'])
 
 # Page configuration
 st.set_page_config(
@@ -325,18 +337,80 @@ try:
                 
                 # Send alert if enabled and threshold exceeded
                 if enable_alerts and abs(price_change_pct) >= alert_threshold:
-                    alert_message = f"ALERT: {signal} signal for {display_name}\n" \
-                                    f"Current Price: {format_currency(current_price)}\n" \
-                                    f"Predicted Price ({forecast_days} days): {format_currency(future_price)}\n" \
-                                    f"Change: {price_change_pct:.2f}%"
+                    # Save user alert preferences
+                    db.save_user_preferences(
+                        st.session_state['session_id'],
+                        telegram_enabled=True,
+                        alert_threshold=alert_threshold
+                    )
+                    
+                    # Format the alert message
+                    alert_message = format_alert_message(
+                        symbol=display_name,
+                        current_price=current_price,
+                        predicted_price=future_price,
+                        days=forecast_days,
+                        signal=signal
+                    )
                     
                     try:
-                        send_telegram_alert(alert_message)
+                        # Send and store the alert
+                        send_telegram_alert(
+                            message=alert_message,
+                            symbol=symbol,
+                            market_type=market_type,
+                            current_price=current_price,
+                            predicted_price=future_price,
+                            signal=signal
+                        )
                         st.success("Alert sent to Telegram!")
                     except Exception as e:
-                        st.error(f"Failed to send Telegram alert: {str(e)}")
+                        # Store the alert even if sending fails
+                        try:
+                            db.store_alert(
+                                symbol=symbol,
+                                market_type=market_type,
+                                current_price=current_price,
+                                predicted_price=future_price,
+                                signal=signal,
+                                message=alert_message
+                            )
+                            st.warning(f"Failed to send Telegram alert: {str(e)}")
+                            st.info("Alert saved in database and will be sent later.")
+                        except Exception as db_error:
+                            st.error(f"Failed to store alert: {str(db_error)}")
         else:
             st.info("Click 'Train Model' to generate predictions.")
+            
+    # Add a section for user preferences
+    st.subheader("User Preferences")
+    st.write("Your preferences are saved automatically and will be remembered next time you visit.")
+    
+    # Add favorite symbols
+    if st.checkbox("Save current symbol as favorite", value=False):
+        current_favorites = user_prefs.favorite_symbols.split(",") if user_prefs.favorite_symbols else []
+        if symbol not in current_favorites:
+            if not current_favorites[0]:  # Handle empty string case
+                current_favorites = [symbol]
+            else:
+                current_favorites.append(symbol)
+            db.save_user_preferences(st.session_state['session_id'], favorite_symbols=current_favorites)
+            st.success(f"Added {display_name} to favorites")
+    
+    # Show favorites
+    if user_prefs.favorite_symbols:
+        st.write("Your favorite symbols:")
+        favorite_list = user_prefs.favorite_symbols.split(",")
+        for fav in favorite_list:
+            if fav:  # Skip empty strings
+                st.write(f"- {fav}")
+                
+    # Save time period preference
+    db.save_user_preferences(
+        st.session_state['session_id'],
+        preferred_timeframe=period,
+        preferred_interval=interval
+    )
 
 except Exception as e:
     st.error(f"An error occurred: {str(e)}")
