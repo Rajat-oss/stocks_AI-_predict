@@ -192,23 +192,30 @@ def make_predictions(df, model, scaler, feature_names, forecast_days=7):
     
     # Store predictions in the database
     try:
+        # Get symbol from dataframe or use a default value
         symbol = df.index.name if df.index.name else "Unknown"
         
-        # Find the latest market data record for this symbol
-        market_data = db.session.query(db.MarketData).filter_by(
-            symbol=symbol
-        ).order_by(db.MarketData.timestamp.desc()).first()
+        # Create a new session for database operations
+        session = db.get_session()
         
-        if market_data:
-            # Store each prediction point
-            for i, (date, price) in enumerate(zip(forecast_dates, predicted_prices)):
-                db.store_prediction(
-                    market_data_id=market_data.id,
-                    prediction_date=date,
-                    predicted_price=price,
-                    model_version="RandomForest_v1.0",
-                    confidence=None  # Confidence not available for RandomForest
-                )
+        try:
+            # Find the latest market data record for this symbol
+            market_data = session.query(db.MarketData).filter_by(
+                symbol=symbol
+            ).order_by(db.MarketData.timestamp.desc()).first()
+            
+            if market_data:
+                # Store each prediction point
+                for i, (date, price) in enumerate(zip(forecast_dates, predicted_prices)):
+                    db.store_prediction(
+                        market_data_id=market_data.id,
+                        prediction_date=date,
+                        predicted_price=price,
+                        model_version="RandomForest_v1.0",
+                        confidence=None  # Confidence not available for RandomForest
+                    )
+        finally:
+            session.close()
     except Exception as e:
         print(f"Failed to store predictions in database: {str(e)}")
     

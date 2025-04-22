@@ -3,7 +3,7 @@ import pandas as pd
 from sqlalchemy import create_engine, Column, Integer, Float, String, DateTime, Boolean, Text, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -13,9 +13,12 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # Create SQLAlchemy engine and session
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
 Session = sessionmaker(bind=engine)
-session = Session()
+
+# Create a session factory function for thread safety
+def get_session():
+    return Session()
 
 # Create declarative base
 Base = declarative_base()
@@ -121,6 +124,7 @@ def store_market_data(df, symbol, market_type):
     Returns:
         Number of records inserted
     """
+    session = get_session()
     try:
         # Create list of MarketData objects
         records = []
@@ -161,6 +165,8 @@ def store_market_data(df, symbol, market_type):
     except Exception as e:
         session.rollback()
         raise e
+    finally:
+        session.close()
 
 # Function to store a prediction
 def store_prediction(market_data_id, prediction_date, predicted_price, model_version=None, confidence=None):
@@ -177,6 +183,7 @@ def store_prediction(market_data_id, prediction_date, predicted_price, model_ver
     Returns:
         Created Prediction object
     """
+    session = get_session()
     try:
         prediction = Prediction(
             market_data_id=market_data_id,
@@ -194,6 +201,8 @@ def store_prediction(market_data_id, prediction_date, predicted_price, model_ver
     except Exception as e:
         session.rollback()
         raise e
+    finally:
+        session.close()
 
 # Function to store an alert
 def store_alert(symbol, market_type, current_price, predicted_price, signal, message=None):
@@ -211,6 +220,7 @@ def store_alert(symbol, market_type, current_price, predicted_price, signal, mes
     Returns:
         Created Alert object
     """
+    session = get_session()
     try:
         alert = Alert(
             symbol=symbol,
@@ -230,6 +240,8 @@ def store_alert(symbol, market_type, current_price, predicted_price, signal, mes
     except Exception as e:
         session.rollback()
         raise e
+    finally:
+        session.close()
 
 # Function to mark an alert as sent
 def mark_alert_sent(alert_id):
@@ -242,6 +254,7 @@ def mark_alert_sent(alert_id):
     Returns:
         Updated Alert object
     """
+    session = get_session()
     try:
         alert = session.query(Alert).filter_by(id=alert_id).first()
         
@@ -254,6 +267,8 @@ def mark_alert_sent(alert_id):
     except Exception as e:
         session.rollback()
         raise e
+    finally:
+        session.close()
 
 # Function to get or create user preferences
 def get_or_create_user_preferences(session_id):
@@ -266,6 +281,7 @@ def get_or_create_user_preferences(session_id):
     Returns:
         UserPreference object
     """
+    session = get_session()
     try:
         pref = session.query(UserPreference).filter_by(session_id=session_id).first()
         
@@ -279,6 +295,8 @@ def get_or_create_user_preferences(session_id):
     except Exception as e:
         session.rollback()
         raise e
+    finally:
+        session.close()
 
 # Function to save user preferences
 def save_user_preferences(session_id, favorite_symbols=None, preferred_timeframe=None, 
@@ -297,9 +315,16 @@ def save_user_preferences(session_id, favorite_symbols=None, preferred_timeframe
     Returns:
         Updated UserPreference object
     """
+    session = get_session()
     try:
-        pref = get_or_create_user_preferences(session_id)
+        # Get existing preference or create new one
+        pref = session.query(UserPreference).filter_by(session_id=session_id).first()
         
+        if not pref:
+            pref = UserPreference(session_id=session_id)
+            session.add(pref)
+        
+        # Update fields if provided
         if favorite_symbols is not None:
             if isinstance(favorite_symbols, list):
                 pref.favorite_symbols = ','.join(favorite_symbols)
@@ -325,6 +350,8 @@ def save_user_preferences(session_id, favorite_symbols=None, preferred_timeframe
     except Exception as e:
         session.rollback()
         raise e
+    finally:
+        session.close()
 
 # Function to check if data exists for a symbol and timeframe
 def check_data_exists(symbol, start_date, end_date=None):
@@ -339,16 +366,20 @@ def check_data_exists(symbol, start_date, end_date=None):
     Returns:
         Boolean indicating whether data exists
     """
-    if end_date is None:
-        end_date = datetime.utcnow()
+    session = get_session()
+    try:
+        if end_date is None:
+            end_date = datetime.utcnow()
+            
+        count = session.query(MarketData).filter(
+            MarketData.symbol == symbol,
+            MarketData.timestamp >= start_date,
+            MarketData.timestamp <= end_date
+        ).count()
         
-    count = session.query(MarketData).filter(
-        MarketData.symbol == symbol,
-        MarketData.timestamp >= start_date,
-        MarketData.timestamp <= end_date
-    ).count()
-    
-    return count > 0
+        return count > 0
+    finally:
+        session.close()
 
 # Function to get market data from the database
 def get_market_data(symbol, start_date, end_date=None):
@@ -363,42 +394,89 @@ def get_market_data(symbol, start_date, end_date=None):
     Returns:
         Pandas DataFrame with market data
     """
-    if end_date is None:
-        end_date = datetime.utcnow()
+    session = get_session()
+    try:
+        if end_date is None:
+            end_date = datetime.utcnow()
+            
+        data = session.query(MarketData).filter(
+            MarketData.symbol == symbol,
+            MarketData.timestamp >= start_date,
+            MarketData.timestamp <= end_date
+        ).order_by(MarketData.timestamp).all()
         
-    data = session.query(MarketData).filter(
-        MarketData.symbol == symbol,
-        MarketData.timestamp >= start_date,
-        MarketData.timestamp <= end_date
-    ).order_by(MarketData.timestamp).all()
+        # Convert to DataFrame
+        if data:
+            df = pd.DataFrame([{
+                'timestamp': d.timestamp,
+                'Open': d.open_price,
+                'High': d.high_price,
+                'Low': d.low_price,
+                'Close': d.close_price,
+                'Volume': d.volume,
+                'RSI': d.rsi,
+                'MACD': d.macd,
+                'MACD_Signal': d.macd_signal,
+                'MACD_Hist': d.macd_hist,
+                'EMA_9': d.ema_9,
+                'EMA_20': d.ema_20,
+                'EMA_50': d.ema_50,
+                'BB_Upper': d.bb_upper,
+                'BB_Middle': d.bb_middle,
+                'BB_Lower': d.bb_lower
+            } for d in data])
+            
+            # Set timestamp as index
+            df.set_index('timestamp', inplace=True)
+            
+            return df
+        
+        return pd.DataFrame()
+    finally:
+        session.close()
+
+# Get all pending alerts
+def get_pending_alerts(limit=10):
+    """
+    Get pending alerts that haven't been sent yet
     
-    # Convert to DataFrame
-    if data:
-        df = pd.DataFrame([{
-            'timestamp': d.timestamp,
-            'Open': d.open_price,
-            'High': d.high_price,
-            'Low': d.low_price,
-            'Close': d.close_price,
-            'Volume': d.volume,
-            'RSI': d.rsi,
-            'MACD': d.macd,
-            'MACD_Signal': d.macd_signal,
-            'MACD_Hist': d.macd_hist,
-            'EMA_9': d.ema_9,
-            'EMA_20': d.ema_20,
-            'EMA_50': d.ema_50,
-            'BB_Upper': d.bb_upper,
-            'BB_Middle': d.bb_middle,
-            'BB_Lower': d.bb_lower
-        } for d in data])
+    Args:
+        limit: Maximum number of alerts to return
         
-        # Set timestamp as index
-        df.set_index('timestamp', inplace=True)
-        
-        return df
+    Returns:
+        List of Alert objects
+    """
+    session = get_session()
+    try:
+        alerts = session.query(Alert).filter_by(sent=False).limit(limit).all()
+        return alerts
+    finally:
+        session.close()
+
+# Clean up old data
+def cleanup_old_data(days=30):
+    """
+    Delete market data older than the specified number of days
     
-    return pd.DataFrame()
+    Args:
+        days: Number of days to keep (delete older than this)
+        
+    Returns:
+        Number of records deleted
+    """
+    session = get_session()
+    try:
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        result = session.query(MarketData).filter(
+            MarketData.timestamp < cutoff_date
+        ).delete()
+        session.commit()
+        return result
+    except Exception as e:
+        session.rollback()
+        raise e
+    finally:
+        session.close()
 
 # Initialize the database if this script is run directly
 if __name__ == "__main__":

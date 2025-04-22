@@ -110,7 +110,7 @@ def get_pending_alerts(limit=10):
         List of Alert objects
     """
     try:
-        alerts = db.session.query(db.Alert).filter_by(sent=False).limit(limit).all()
+        alerts = db.get_pending_alerts(limit)
         return alerts
     except Exception as e:
         print(f"Failed to get pending alerts: {str(e)}")

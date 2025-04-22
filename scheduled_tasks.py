@@ -56,14 +56,8 @@ def cleanup_old_data(days=30):
         Number of records deleted
     """
     try:
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
-        
-        # Use SQLAlchemy to delete old records
-        result = db.session.query(db.MarketData).filter(
-            db.MarketData.timestamp < cutoff_date
-        ).delete()
-        
-        db.session.commit()
+        # Use the database function to clean up
+        result = db.cleanup_old_data(days=days)
         
         if result > 0:
             logger.info(f"Deleted {result} old market data records")
@@ -72,7 +66,6 @@ def cleanup_old_data(days=30):
         
     except Exception as e:
         logger.error(f"Error cleaning up old data: {str(e)}")
-        db.session.rollback()
         return 0
 
 def start_scheduled_tasks():
