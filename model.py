@@ -5,6 +5,15 @@ from sklearn.model_selection import train_test_split
 import streamlit as st
 from sklearn.ensemble import RandomForestRegressor
 from datetime import datetime, timedelta
+import os
+from dotenv import load_dotenv
+import database as db
+
+# Load environment variables
+load_dotenv()
+
+# Get model settings from environment variables
+TRAIN_TEST_SPLIT = float(os.getenv("TRAIN_TEST_SPLIT", "0.8"))
 
 def prepare_features(df):
     """
@@ -81,9 +90,12 @@ def train_model(df, forecast_days=7):
     scaler = MinMaxScaler(feature_range=(0, 1))
     X_scaled = scaler.fit_transform(X)
     
-    # Split into train and test sets (80% train, 20% test)
+    # Get test size from environment variable (default to 0.2 if 1-TRAIN_TEST_SPLIT is invalid)
+    test_size = max(0.1, min(0.5, 1.0 - TRAIN_TEST_SPLIT))
+    
+    # Split into train and test sets
     X_train, X_test, y_train, y_test = train_test_split(
-        X_scaled, y, test_size=0.2, shuffle=False
+        X_scaled, y, test_size=test_size, shuffle=False
     )
     
     # Train Random Forest model (simpler and faster than LSTM for this demo)
@@ -100,6 +112,19 @@ def train_model(df, forecast_days=7):
     
     st.write(f"Model R² score (training): {train_score:.4f}")
     st.write(f"Model R² score (testing): {test_score:.4f}")
+    
+    # Store model metadata in the database
+    try:
+        # This would typically store model metadata, not the actual model
+        # In a real implementation, you would store the model itself in a model registry
+        symbol = df.index.name if df.index.name else "Unknown"
+        timestamp = datetime.now()
+        
+        # Placeholder for storing model metadata in the future
+        # We could create a Model table in the database and store metadata here
+        
+    except Exception as e:
+        st.warning(f"Failed to store model metadata: {str(e)}")
     
     return model, scaler, X.columns
 
@@ -164,5 +189,27 @@ def make_predictions(df, model, scaler, feature_names, forecast_days=7):
         
         # Update current data for next iteration
         current_data = new_row
+    
+    # Store predictions in the database
+    try:
+        symbol = df.index.name if df.index.name else "Unknown"
+        
+        # Find the latest market data record for this symbol
+        market_data = db.session.query(db.MarketData).filter_by(
+            symbol=symbol
+        ).order_by(db.MarketData.timestamp.desc()).first()
+        
+        if market_data:
+            # Store each prediction point
+            for i, (date, price) in enumerate(zip(forecast_dates, predicted_prices)):
+                db.store_prediction(
+                    market_data_id=market_data.id,
+                    prediction_date=date,
+                    predicted_price=price,
+                    model_version="RandomForest_v1.0",
+                    confidence=None  # Confidence not available for RandomForest
+                )
+    except Exception as e:
+        print(f"Failed to store predictions in database: {str(e)}")
     
     return forecast_dates, predicted_prices, last_close

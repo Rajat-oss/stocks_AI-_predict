@@ -14,9 +14,13 @@ from model import train_model, make_predictions
 from telegram_alerts import send_telegram_alert, format_alert_message, send_pending_alerts
 from utils import format_currency, render_indicator_info
 import database as db
+from scheduled_tasks import start_scheduled_tasks
 
 # Initialize the database
 db.init_db()
+
+# Start background tasks for sending alerts and cleanup
+start_scheduled_tasks()
 
 # Load environment variables
 load_dotenv()
