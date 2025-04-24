@@ -9,11 +9,11 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Get the database URL from environment variables
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Use SQLite instead of PostgreSQL
+DATABASE_URL = "sqlite:///marketprophet.db"
 
 # Create SQLAlchemy engine and session
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
+engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 
 # Create a session factory function for thread safety

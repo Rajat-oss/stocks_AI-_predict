@@ -1,0 +1,23 @@
+# numpy>=2.2.5
+# pandas>=2.2.3
+# plotly>=6.0.1
+# python-dotenv>=1.1.0
+# requests>=2.32.3
+# scikit-learn>=1.6.1
+# sqlalchemy>=2.0.40
+# streamlit>=1.44.1
+# yfinance>=0.2.55 
+
+
+
+numpy>=2.2.5
+pandas>=2.2.3
+plotly>=6.0.1
+python-dotenv>=1.1.0
+requests>=2.32.3
+scikit-learn>=1.6.1
+sqlalchemy>=2.0.40
+streamlit>=1.44.1
+yfinance>=0.2.55
+TA-Lib>=0.4.28
+python-telegram-bot>=20.7
